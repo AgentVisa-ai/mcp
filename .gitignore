@@ -1,0 +1,4 @@
+# Override root .gitignore — mcp/dist IS tracked (it's the published package output)
+!dist/
+node_modules/
+*.env

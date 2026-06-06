@@ -1,0 +1,46 @@
+{
+  "name": "@agentvisa/mcp",
+  "version": "0.2.0",
+  "description": "AgentVisa MCP server — securely present your AgentVisa token to any site that requests it",
+  "keywords": [
+    "mcp",
+    "agentvisa",
+    "human-verification",
+    "ai-agent",
+    "model-context-protocol"
+  ],
+  "homepage": "https://agentvisa.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgentVisa-ai/mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AgentVisa-ai/mcp/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "agentvisa-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
