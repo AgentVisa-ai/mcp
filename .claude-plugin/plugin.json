@@ -1,0 +1,20 @@
+{
+  "name": "agentvisa",
+  "description": "Human verification for AI agents — automatically present your AgentVisa token when sites require it. Install once and Claude handles the token handshake on every AgentVisa-protected site.",
+  "version": "0.3.1",
+  "author": {
+    "name": "AgentVisa",
+    "email": "support@agentvisa.ai"
+  },
+  "homepage": "https://agentvisa.ai",
+  "repository": "https://github.com/AgentVisa-ai/mcp",
+  "license": "MIT",
+  "keywords": ["agentvisa", "human-verification", "ai-agent", "mcp", "identity", "web-bot-auth"],
+  "mcpServers": {
+    "agentvisa": {
+      "command": "npx",
+      "args": ["-y", "@agentvisa/mcp@^0.3"],
+      "env": {}
+    }
+  }
+}

@@ -8,6 +8,21 @@ When a site returns a `401` response with the `X-AgentVisa-Required` header, you
 
 ## Install
 
+### Claude Code (plugin — recommended)
+
+```bash
+# 1. Add your token to your shell profile (~/.zshrc or ~/.bashrc)
+export AGENTVISA_TOKEN="av_your_token_here"
+
+# 2. Install the plugin
+/plugin marketplace add AgentVisa-ai/mcp
+/plugin install agentvisa@AgentVisa-ai/mcp
+```
+
+Restart Claude Code. Done — the skill and MCP server load automatically.
+
+### npm (manual)
+
 ```bash
 npm install -g @agentvisa/mcp
 ```
