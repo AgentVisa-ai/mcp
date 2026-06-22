@@ -2,13 +2,20 @@
 /**
  * AgentVisa MCP Server
  *
- * Stores your permanent api/token securely. When a site returns
+ * Stores your permanent AgentVisa token securely. When a site returns
  * 401 + X-AgentVisa-Required, call get_agentvisa_token with the
- * widget_id to exchange your api/token for a short-lived TemporaryToken.
- * Send that TemporaryToken as X-AgentVisa-Token on the retry.
+ * widget_id to exchange your token for a short-lived TemporaryToken.
+ *
+ * The TemporaryToken is used in two ways:
+ *   1. Standard:       X-AgentVisa-Token: <tmp_xxx>  (header on retry request)
+ *   2. Web Bot Auth:   AgentVisa-Assertion: <tmp_xxx> (covered by RFC 9421 signature)
+ *
+ * For sites using Cloudflare Web Bot Auth (RFC 9421), include
+ * "agentvisa-assertion" in your Signature-Input covered components.
+ * This cryptographically binds the human assertion to the signed request.
  *
  * Config (environment variables):
- *   AGENTVISA_TOKEN   — your permanent AgentVisa api/token (required)
+ *   AGENTVISA_TOKEN   — your permanent AgentVisa token (required)
  *   AGENTVISA_API_URL — override API base URL (optional, default: https://api.agentvisa.ai)
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -25,13 +32,15 @@ if (!AGENTVISA_TOKEN) {
 const TOOLS = [
     {
         name: "get_agentvisa_token",
-        description: "Exchanges your permanent AgentVisa api/token for a short-lived TemporaryToken " +
+        description: "Exchanges your permanent AgentVisa token for a short-lived TemporaryToken " +
             "authorised for a specific site. " +
             "Call this whenever a site returns HTTP 401 with the header 'X-AgentVisa-Required: <widget_id>'. " +
-            "Pass that widget_id here. The returned temporary_token goes in the " +
-            "'X-AgentVisa-Token' header on your retry request to the site. " +
+            "Pass that widget_id here. The returned temp_token should be sent as: " +
+            "(a) 'X-AgentVisa-Token: <tmp>' header on standard sites, or " +
+            "(b) 'AgentVisa-Assertion: <tmp>' header on sites using Web Bot Auth (RFC 9421) — " +
+            "include 'agentvisa-assertion' in your Signature-Input covered components to bind it cryptographically. " +
             "The TemporaryToken expires in 60 minutes. A new one can only be issued once per 24 hours per site. " +
-            "Never display, log, or send the permanent api/token to any site — only the TemporaryToken.",
+            "Never display, log, or send the permanent token to any site — only the TemporaryToken.",
         inputSchema: {
             type: "object",
             properties: {
@@ -59,9 +68,10 @@ const TOOLS = [
     },
     {
         name: "get_agentvisa_status",
-        description: "Returns the current status of the AgentVisa MCP server: whether an api/token is " +
+        description: "Returns the current status of the AgentVisa MCP server: whether a token is " +
             "configured, the API URL in use, and the first 8 characters of the token so the " +
-            "user can confirm which account is loaded. Use this to diagnose setup issues.",
+            "user can confirm which account is loaded. Also confirms Web Bot Auth (RFC 9421) " +
+            "support via AgentVisa-Assertion header. Use this to diagnose setup issues.",
         inputSchema: {
             type: "object",
             properties: {},
@@ -70,7 +80,7 @@ const TOOLS = [
     },
 ];
 // ── Server ──────────────────────────────────────────────────────────────────
-const server = new Server({ name: "agentvisa", version: "0.2.0" }, { capabilities: { tools: {} } });
+const server = new Server({ name: "agentvisa", version: "0.3.1" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
@@ -111,9 +121,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        agent_token_id: AGENTVISA_TOKEN,
+                        token: AGENTVISA_TOKEN,
                         widget_id: widget_id,
-                        duration_minutes: 60,
                     }),
                 });
                 const data = await response.json();
@@ -146,18 +155,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                             }],
                     };
                 }
-                // Success — return the TemporaryToken
+                // Success — return the temp token
                 return {
                     content: [{
                             type: "text",
                             text: JSON.stringify({
                                 success: true,
-                                temporary_token: data.temporary_token,
+                                temp_token: data.temp_token,
                                 expires_at: data.expires_at,
-                                instructions: "Add this as the HTTP header 'X-AgentVisa-Token: <temporary_token>' " +
-                                    "on your retry request to the site. " +
-                                    "Do not log, display, or include in URLs. " +
-                                    "This token is valid for 60 minutes for this site only.",
+                                headers: {
+                                    standard: { "X-AgentVisa-Token": data.temp_token },
+                                    web_bot_auth: { "AgentVisa-Assertion": data.temp_token },
+                                },
+                                instructions: "Send the temp_token as a header on your retry request to the site. " +
+                                    "Standard sites: use 'X-AgentVisa-Token: <tmp>'. " +
+                                    "Sites using Web Bot Auth (RFC 9421): use 'AgentVisa-Assertion: <tmp>' and " +
+                                    "include 'agentvisa-assertion' in your Signature-Input covered components — " +
+                                    "this cryptographically binds the human assertion to the signed request. " +
+                                    "Do not log, display, or include this token in URLs. " +
+                                    "Valid for 60 minutes for this site only.",
                             }),
                         }],
                 };
@@ -241,7 +257,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                             configured: hasToken,
                             token_preview: hasToken ? `${AGENTVISA_TOKEN.slice(0, 8)}...` : null,
                             api_url: API_BASE,
-                            server_version: "0.2.0",
+                            server_version: "0.3.1",
+                            web_bot_auth_support: true,
+                            web_bot_auth_header: "AgentVisa-Assertion",
                         }),
                     }],
             };
