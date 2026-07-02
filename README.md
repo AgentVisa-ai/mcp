@@ -11,15 +11,27 @@ When a site returns a `401` response with the `X-AgentVisa-Required` header, you
 ### Claude Code (plugin — recommended)
 
 ```bash
-# 1. Add your token to your shell profile (~/.zshrc or ~/.bashrc)
-export AGENTVISA_TOKEN="av_your_token_here"
-
-# 2. Install the plugin
+# 1. Install the plugin
 /plugin marketplace add AgentVisa-ai/mcp
 /plugin install agentvisa@AgentVisa-ai/mcp
 ```
 
+```jsonc
+// 2. Give Claude Code your token — scoped to Claude Code, not your whole shell.
+//    Add to ~/.claude/settings.json:
+{
+  "env": {
+    "AGENTVISA_TOKEN": "av_your_token_here"
+  }
+}
+```
+
 Restart Claude Code. Done — the skill and MCP server load automatically.
+
+> Prefer scoped config (like the above, or the MCP `env` block below) over a
+> shell-profile `export` — a shell-wide variable is readable by every process
+> you launch. And never paste the token into a chat/conversation: if that
+> happens, revoke and reissue it at agentvisa.ai.
 
 ### npm (manual)
 
