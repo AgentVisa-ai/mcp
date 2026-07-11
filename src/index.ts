@@ -52,7 +52,8 @@ const TOOLS: Tool[] = [
       "(a) 'X-AgentVisa-Token: <tmp>' header on standard sites, or " +
       "(b) 'AgentVisa-Assertion: <tmp>' header on sites using Web Bot Auth (RFC 9421) — " +
       "include 'agentvisa-assertion' in your Signature-Input covered components to bind it cryptographically. " +
-      "The TemporaryToken expires in 60 minutes. A new one can only be issued once per 24 hours per site. " +
+      "The TemporaryToken expires in 60 minutes. Calling again while it is still valid returns the same token " +
+      "(idempotent); a fresh one is issued automatically once it has expired or been revoked — safe to call any time. " +
       "Never display, log, or send the permanent token to any site — only the TemporaryToken.",
     inputSchema: {
       type: "object" as const,
@@ -158,18 +159,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const data = await response.json() as Record<string, unknown>;
 
         if (!response.ok) {
-          // 429 = cooldown active — a valid TemporaryToken already exists for this widget
+          // 429 — defensive: current servers assert idempotently (same token
+          // returned while valid) and no longer emit a cooldown, but an older
+          // or rate-limited server may still answer 429.
           if (response.status === 429) {
             return {
               content: [{
                 type: "text" as const,
                 text: JSON.stringify({
                   success: false,
-                  error: "cooldown_active",
+                  error: "rate_limited",
                   message:
-                    "A TemporaryToken for this site was already issued within the last 24 hours. " +
-                    "If a previous token has not yet expired (60-minute window), retry with it. " +
-                    "Otherwise wait for the 24-hour cooldown to reset.",
+                    "The AgentVisa API declined to issue a token right now (rate limited). " +
+                    "If you still hold an unexpired temp_token for this site, retry with it; " +
+                    "otherwise wait briefly and call this tool again.",
                   detail: data,
                 }),
               }],
