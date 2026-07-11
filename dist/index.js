@@ -14,19 +14,45 @@
  * "agentvisa-assertion" in your Signature-Input covered components.
  * This cryptographically binds the human assertion to the signed request.
  *
- * Config (environment variables):
- *   AGENTVISA_TOKEN   — your permanent AgentVisa token (required)
- *   AGENTVISA_API_URL — override API base URL (optional, default: https://api.agentvisa.ai)
+ * Config:
+ *   AGENTVISA_TOKEN      — your permanent AgentVisa token (env var)
+ *   AGENTVISA_TOKEN_FILE — path to a file containing the token (optional;
+ *                          default ~/.agentvisa/token). The file is read on
+ *                          EVERY call, so you can install this MCP once with
+ *                          no token and drop the token file in later — no
+ *                          agent restart needed. chmod 600 the file.
+ *   AGENTVISA_API_URL    — override API base URL (optional, default: https://api.agentvisa.ai)
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 // ── Config ─────────────────────────────────────────────────────────────────
-const AGENTVISA_TOKEN = process.env.AGENTVISA_TOKEN ?? "";
 const API_BASE = (process.env.AGENTVISA_API_URL ?? "https://api.agentvisa.ai").replace(/\/$/, "");
-if (!AGENTVISA_TOKEN) {
-    process.stderr.write("[AgentVisa MCP] ERROR: AGENTVISA_TOKEN environment variable is not set.\n" +
-        "Get your token at https://agentvisa.ai and add it to your MCP config.\n");
+const TOKEN_FILE = process.env.AGENTVISA_TOKEN_FILE ?? join(homedir(), ".agentvisa", "token");
+/**
+ * Resolve the permanent token LAZILY, on every tool call — never cached.
+ * Env var wins (set at launch by the MCP config); otherwise the token file
+ * is read fresh each time, so a token added or rotated while the agent is
+ * running takes effect immediately, with no restart.
+ */
+function getAgentVisaToken() {
+    const fromEnv = (process.env.AGENTVISA_TOKEN ?? "").trim();
+    if (fromEnv)
+        return fromEnv;
+    try {
+        return readFileSync(TOKEN_FILE, "utf8").trim();
+    }
+    catch {
+        return "";
+    }
+}
+if (!getAgentVisaToken()) {
+    process.stderr.write("[AgentVisa MCP] No token configured yet (checked AGENTVISA_TOKEN env and " +
+        `${TOKEN_FILE}). That's OK — tools will work as soon as a token appears; ` +
+        "no restart needed. Get one at https://agentvisa.ai\n");
 }
 // ── Tool definitions ────────────────────────────────────────────────────────
 const TOOLS = [
@@ -58,7 +84,7 @@ const TOOLS = [
         name: "request_reverification",
         description: "Sends a re-verification email to the AgentVisa account holder. " +
             "Call this when a site returns reason='reverification_required', which means the " +
-            "daily verification limit (10/day on Basic, 50/day on Gold) has been reached. " +
+            "daily verification limit (300/day on Basic, 3000/day on Gold) has been reached. " +
             "The human must click the link in their email before the token can be used again. " +
             "Tell the user: 'Check your email for a re-verification link from AgentVisa.'",
         inputSchema: {
@@ -81,7 +107,7 @@ const TOOLS = [
     },
 ];
 // ── Server ──────────────────────────────────────────────────────────────────
-const server = new Server({ name: "agentvisa", version: "0.3.1" }, { capabilities: { tools: {} } });
+const server = new Server({ name: "agentvisa", version: "0.4.0" }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
@@ -90,6 +116,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Calls POST /v1/token/assert with the permanent api/token + widget_id
         // Returns the short-lived TemporaryToken for use with the site.
         case "get_agentvisa_token": {
+            const AGENTVISA_TOKEN = getAgentVisaToken();
             if (!AGENTVISA_TOKEN) {
                 return {
                     content: [{
@@ -97,9 +124,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                             text: JSON.stringify({
                                 success: false,
                                 error: "no_token_configured",
-                                message: "AGENTVISA_TOKEN is not set in the MCP server config. " +
-                                    "Visit https://agentvisa.ai to get your api/token, then add it as " +
-                                    "AGENTVISA_TOKEN in your MCP configuration.",
+                                message: "No AgentVisa token found (checked AGENTVISA_TOKEN env and " +
+                                    `the token file ${TOKEN_FILE}). Have your human get one at ` +
+                                    "https://agentvisa.ai/signup, then EITHER save it to that file " +
+                                    "(no restart needed — retry this tool immediately after) OR add " +
+                                    "it as AGENTVISA_TOKEN in the MCP config (takes effect after a restart).",
                             }),
                         }],
                 };
@@ -196,6 +225,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         // ── request_reverification ───────────────────────────────────────────
         case "request_reverification": {
+            const AGENTVISA_TOKEN = getAgentVisaToken();
             if (!AGENTVISA_TOKEN) {
                 return {
                     content: [{
@@ -252,6 +282,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
         // ── get_agentvisa_status ─────────────────────────────────────────────
         case "get_agentvisa_status": {
+            const AGENTVISA_TOKEN = getAgentVisaToken();
             const hasToken = Boolean(AGENTVISA_TOKEN);
             return {
                 content: [{
@@ -260,7 +291,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                             configured: hasToken,
                             token_preview: hasToken ? `${AGENTVISA_TOKEN.slice(0, 8)}...` : null,
                             api_url: API_BASE,
-                            server_version: "0.3.1",
+                            server_version: "0.4.0",
                             web_bot_auth_support: true,
                             web_bot_auth_header: "AgentVisa-Assertion",
                         }),

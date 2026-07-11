@@ -119,8 +119,21 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `AGENTVISA_TOKEN` | ✅ Yes | — | Your AgentVisa token |
+| `AGENTVISA_TOKEN` | No* | — | Your AgentVisa token (env var, read per call) |
+| `AGENTVISA_TOKEN_FILE` | No* | `~/.agentvisa/token` | Path to a file containing the token |
 | `AGENTVISA_API_URL` | No | `https://api.agentvisa.ai` | Override API URL (dev/staging) |
+
+\* One of the two must provide a token — but **not necessarily at startup**. The token
+is resolved lazily on every tool call: env var first, then the token file. This means
+you can install the MCP *before* signing up, and drop the token in later with **no
+agent restart**:
+
+```bash
+mkdir -p ~/.agentvisa && printf '%s' 'av_your_token_here' > ~/.agentvisa/token && chmod 600 ~/.agentvisa/token
+```
+
+The very next tool call picks it up. Rotating a token works the same way — overwrite
+the file and the change takes effect immediately.
 
 ## How it works
 

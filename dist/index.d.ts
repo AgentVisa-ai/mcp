@@ -14,9 +14,14 @@
  * "agentvisa-assertion" in your Signature-Input covered components.
  * This cryptographically binds the human assertion to the signed request.
  *
- * Config (environment variables):
- *   AGENTVISA_TOKEN   — your permanent AgentVisa token (required)
- *   AGENTVISA_API_URL — override API base URL (optional, default: https://api.agentvisa.ai)
+ * Config:
+ *   AGENTVISA_TOKEN      — your permanent AgentVisa token (env var)
+ *   AGENTVISA_TOKEN_FILE — path to a file containing the token (optional;
+ *                          default ~/.agentvisa/token). The file is read on
+ *                          EVERY call, so you can install this MCP once with
+ *                          no token and drop the token file in later — no
+ *                          agent restart needed. chmod 600 the file.
+ *   AGENTVISA_API_URL    — override API base URL (optional, default: https://api.agentvisa.ai)
  */
 export {};
 //# sourceMappingURL=index.d.ts.map
