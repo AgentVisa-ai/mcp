@@ -31,9 +31,9 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
@@ -97,10 +97,12 @@ const TOOLS: Tool[] = [
     name: "request_reverification",
     description:
       "Sends a re-verification email to the AgentVisa account holder. " +
-      "Call this when a site returns reason='reverification_required', which means the " +
-      "daily verification limit (300/day on Basic, 3000/day on Gold) has been reached. " +
-      "The human must click the link in their email before the token can be used again. " +
-      "Tell the user: 'Check your email for a re-verification link from AgentVisa.'",
+      "Call this ONLY when a site returns reason='reverification_required' — a security hold " +
+      "on the token (possible compromise, revocation, or annual renewal). The human must click " +
+      "the link in their email before the token works again. " +
+      "Tell the user: 'Check your email for a re-verification link from AgentVisa.' " +
+      "Do NOT call this for reason='daily_limit_reached' — that is a traffic cap that resets " +
+      "automatically at midnight UTC; no human action needed, just resume tomorrow.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -120,12 +122,50 @@ const TOOLS: Tool[] = [
       required: [],
     },
   },
+  {
+    name: "request_agentvisa",
+    description:
+      "Call this when NO AgentVisa token is configured (get_agentvisa_token returned " +
+      "no_token_configured). Starts a secure device handoff: returns a message_for_human " +
+      "containing a short code and link. Relay that message to your human — they approve " +
+      "once, ever (~2 min if they need to sign up; free). Then call await_agentvisa_approval " +
+      "repeatedly until configured. The permanent token is stored by this server and NEVER " +
+      "shown to you — nothing secret passes through your context.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        widget_id: {
+          type: "string",
+          description: "Optional: the widget ID of the site that blocked you (from X-AgentVisa-Required) — shown to the human for context.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "await_agentvisa_approval",
+    description:
+      "Call after request_agentvisa, once you've relayed the message to your human. Waits up " +
+      "to ~20 seconds for their approval. Returns configured:true when done (the token is " +
+      "stored securely by this server — you never see it; get_agentvisa_token now works), or " +
+      "status:'pending' — in that case simply call this tool again. Also possible: 'denied' " +
+      "or 'expired' (start over with request_agentvisa).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 // ── Server ──────────────────────────────────────────────────────────────────
 
+// Pending device handoff — lives only in this process's memory, never
+// returned to the model. (One handoff at a time is plenty.)
+let pendingDeviceCode: string | null = null;
+
 const server = new Server(
-  { name: "agentvisa", version: "0.4.0" },
+  { name: "agentvisa", version: "0.5.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -331,12 +371,148 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             configured: hasToken,
             token_preview: hasToken ? `${AGENTVISA_TOKEN.slice(0, 8)}...` : null,
             api_url: API_BASE,
-            server_version: "0.4.0",
+            server_version: "0.5.0",
           web_bot_auth_support: true,
           web_bot_auth_header: "AgentVisa-Assertion",
           }),
         }],
       };
+    }
+
+    // ── request_agentvisa — start a device handoff (RFC 8628) ───────────
+    // The custodian path: this server keeps the device_code and, later, the
+    // av_ token. Neither is ever returned to the model.
+    case "request_agentvisa": {
+      const { widget_id } = (args ?? {}) as { widget_id?: string };
+      try {
+        const response = await fetch(`${API_BASE}/v1/device/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ widget_id: widget_id ?? null }),
+        });
+        const data = await response.json() as Record<string, unknown>;
+        if (!response.ok) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({ success: false, error: "device_start_failed", http_status: response.status, detail: data }),
+            }],
+          };
+        }
+        pendingDeviceCode = String(data.device_code ?? "");
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              user_code: data.user_code,
+              verification_url_complete: data.verification_url_complete,
+              message_for_human: data.message_for_human,
+              expires_in: data.expires_in,
+              next:
+                "Relay message_for_human to your human now (present the link as clickable). " +
+                "Then call await_agentvisa_approval — repeat it until configured:true.",
+            }),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({ success: false, error: "network_error", detail: String(err) }),
+          }],
+        };
+      }
+    }
+
+    // ── await_agentvisa_approval — poll + store, token never surfaces ───
+    case "await_agentvisa_approval": {
+      if (!pendingDeviceCode) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({ success: false, error: "no_pending_handoff", message: "Call request_agentvisa first." }),
+          }],
+        };
+      }
+      const POLLS = 7;
+      const INTERVAL_MS = 3000;
+      try {
+        for (let i = 0; i < POLLS; i++) {
+          const response = await fetch(`${API_BASE}/v1/device/poll`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ device_code: pendingDeviceCode }),
+          });
+          const data = await response.json() as Record<string, unknown>;
+          const status = String(data.status ?? "error");
+
+          if (status === "approved") {
+            const raw = String(data.token ?? "");
+            pendingDeviceCode = null;
+            try {
+              mkdirSync(dirname(TOKEN_FILE), { recursive: true });
+              writeFileSync(TOKEN_FILE, raw, { mode: 0o600 });
+            } catch (writeErr) {
+              // Storage failed — surface the display form only; the human can
+              // re-run the flow. Never emit the raw token to the model.
+              return {
+                content: [{
+                  type: "text" as const,
+                  text: JSON.stringify({
+                    success: false,
+                    error: "token_store_failed",
+                    detail: String(writeErr),
+                    message: `Could not write ${TOKEN_FILE}. Fix permissions and run request_agentvisa again.`,
+                  }),
+                }],
+              };
+            }
+            return {
+              content: [{
+                type: "text" as const,
+                text: JSON.stringify({
+                  success: true,
+                  configured: true,
+                  token_display: data.token_display,
+                  message:
+                    "AgentVisa stored securely — the token was written to the token file and is " +
+                    "never shown in this conversation. get_agentvisa_token now works on every " +
+                    "AgentVisa-protected site. Tell your human: 'All set — you won't need to do that again.'",
+                }),
+              }],
+            };
+          }
+          if (status === "denied" || status === "expired" || status === "already_claimed") {
+            pendingDeviceCode = null;
+            return {
+              content: [{
+                type: "text" as const,
+                text: JSON.stringify({ success: false, status, message: String(data.message ?? "Start over with request_agentvisa.") }),
+              }],
+            };
+          }
+          // pending → wait and try again (stay under typical tool-call timeouts)
+          if (i < POLLS - 1) await new Promise((r) => setTimeout(r, INTERVAL_MS));
+        }
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              status: "pending",
+              message: "Human hasn't approved yet. Call await_agentvisa_approval again (the code stays valid ~10 minutes).",
+            }),
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({ success: false, error: "network_error", detail: String(err) }),
+          }],
+        };
+      }
     }
 
     default:

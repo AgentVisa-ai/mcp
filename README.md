@@ -112,7 +112,9 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
 | Tool | Description |
 |------|-------------|
 | `get_agentvisa_token` | Exchanges your permanent token for a short-lived TemporaryToken scoped to a specific site |
-| `request_reverification` | Sends re-verification email when daily limit is hit (`reason: reverification_required`) |
+| `request_agentvisa` | **No token yet? Zero-friction onboarding.** Starts a device handoff — relays a short code to your human, who approves once at agentvisa.ai/device |
+| `await_agentvisa_approval` | Polls the handoff; on approval the token is stored in the token file by this server — **it never appears in the model's context or chat** |
+| `request_reverification` | Sends re-verification email for a security hold (`reason: reverification_required`) |
 | `get_agentvisa_status` | Shows whether the server is configured and which token is loaded |
 
 ## Environment variables
