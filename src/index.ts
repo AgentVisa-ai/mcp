@@ -22,6 +22,10 @@
  *                          no token and drop the token file in later — no
  *                          agent restart needed. chmod 600 the file.
  *   AGENTVISA_API_URL    — override API base URL (optional, default: https://api.agentvisa.ai)
+ *   AGENTVISA_WAIT_SECONDS — how long await_agentvisa_approval blocks waiting for
+ *                          the human (default 240, max 600). Agents are turn-based:
+ *                          holding the call open means the turn resumes the instant
+ *                          the human approves, with no prompting.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -145,11 +149,12 @@ const TOOLS: Tool[] = [
   {
     name: "await_agentvisa_approval",
     description:
-      "Call after request_agentvisa, once you've relayed the message to your human. Waits up " +
-      "to ~20 seconds for their approval. Returns configured:true when done (the token is " +
-      "stored securely by this server — you never see it; get_agentvisa_token now works), or " +
-      "status:'pending' — in that case simply call this tool again. Also possible: 'denied' " +
-      "or 'expired' (start over with request_agentvisa).",
+      "Call IMMEDIATELY after relaying request_agentvisa's message to your human, and DO NOT END " +
+      "YOUR TURN until it resolves. This call blocks (several minutes by default) and returns the " +
+      "instant the human approves — you do not need them to tell you they're done. Returns " +
+      "configured:true on success (the token is stored securely by this server — you never see it; " +
+      "get_agentvisa_token works from then on). If it returns status:'pending', call it again " +
+      "right away. Also possible: 'denied' or 'expired' (start over with request_agentvisa).",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -165,7 +170,7 @@ const TOOLS: Tool[] = [
 let pendingDeviceCode: string | null = null;
 
 const server = new Server(
-  { name: "agentvisa", version: "0.5.0" },
+  { name: "agentvisa", version: "0.6.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -371,7 +376,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             configured: hasToken,
             token_preview: hasToken ? `${AGENTVISA_TOKEN.slice(0, 8)}...` : null,
             api_url: API_BASE,
-            server_version: "0.5.0",
+            server_version: "0.6.0",
           web_bot_auth_support: true,
           web_bot_auth_header: "AgentVisa-Assertion",
           }),
@@ -435,10 +440,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }],
         };
       }
-      const POLLS = 7;
+      // HOLD THE TURN. Agents are turn-based: an MCP server cannot wake one up.
+      // If this call returns "pending", the agent's turn typically ends and the
+      // approval — which may land seconds later — goes uncollected until a human
+      // prods it (observed live 2026-07-12). So we stay inside the call, polling
+      // for minutes, and return the moment the human approves. Progress
+      // notifications keep MCP clients from timing the call out.
+      const WAIT_SECONDS = Math.max(
+        10,
+        Math.min(600, Number(process.env.AGENTVISA_WAIT_SECONDS ?? 240)),
+      );
       const INTERVAL_MS = 3000;
+      const POLLS = Math.ceil((WAIT_SECONDS * 1000) / INTERVAL_MS);
+      const progressToken = request.params?._meta?.progressToken;
       try {
         for (let i = 0; i < POLLS; i++) {
+          if (progressToken !== undefined && i > 0) {
+            // Best-effort keepalive — never let a notification failure break the wait.
+            try {
+              await server.notification({
+                method: "notifications/progress",
+                params: {
+                  progressToken,
+                  progress: i,
+                  total: POLLS,
+                  message: "Waiting for your human to approve the AgentVisa…",
+                },
+              });
+            } catch { /* ignore */ }
+          }
           const response = await fetch(`${API_BASE}/v1/device/poll`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -492,7 +522,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               }],
             };
           }
-          // pending → wait and try again (stay under typical tool-call timeouts)
+          // pending → keep waiting inside this same call (see HOLD THE TURN above)
           if (i < POLLS - 1) await new Promise((r) => setTimeout(r, INTERVAL_MS));
         }
         return {
@@ -501,7 +531,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: JSON.stringify({
               success: false,
               status: "pending",
-              message: "Human hasn't approved yet. Call await_agentvisa_approval again (the code stays valid ~10 minutes).",
+              next_action: "CALL await_agentvisa_approval AGAIN IMMEDIATELY",
+              message:
+                `Your human has not approved yet (waited ${WAIT_SECONDS}s). DO NOT END YOUR TURN and do ` +
+                "not ask the human to tell you when they're done — call await_agentvisa_approval " +
+                "again RIGHT NOW. It returns the instant they approve. The code stays valid ~10 " +
+                "minutes; if it expires, start over with request_agentvisa. If you must stop, tell " +
+                "your human to say 'approved, continue' when they've clicked Approve.",
             }),
           }],
         };

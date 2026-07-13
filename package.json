@@ -1,6 +1,6 @@
 {
   "name": "@agentvisa/mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "AgentVisa MCP server — securely present your AgentVisa token to any site that requests it. Supports Web Bot Auth (RFC 9421) via AgentVisa-Assertion header.",
   "keywords": [
     "mcp",

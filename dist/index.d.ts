@@ -22,6 +22,10 @@
  *                          no token and drop the token file in later — no
  *                          agent restart needed. chmod 600 the file.
  *   AGENTVISA_API_URL    — override API base URL (optional, default: https://api.agentvisa.ai)
+ *   AGENTVISA_WAIT_SECONDS — how long await_agentvisa_approval blocks waiting for
+ *                          the human (default 240, max 600). Agents are turn-based:
+ *                          holding the call open means the turn resumes the instant
+ *                          the human approves, with no prompting.
  */
 export {};
 //# sourceMappingURL=index.d.ts.map
