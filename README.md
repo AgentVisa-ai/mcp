@@ -1,10 +1,10 @@
 # @agentvisa/mcp
 
-AgentVisa MCP server — install once in your AI agent and it handles human verification automatically on any AgentVisa-protected site.
+AgentVisa MCP server — the sanctioned way for your AI agent to trust AgentVisa. You install it once; that installation is your agent's authorization, so it never has to act on instructions from a webpage it just met. After that, human verification is automatic on every AgentVisa-protected site.
 
 ## What it does
 
-When a site returns a `401` response with the `X-AgentVisa-Required` header, your agent calls `get_agentvisa_token` and adds `X-AgentVisa-Token: <token>` to the retry — no copy-pasting, no remembering, no prompt needed.
+When a site returns a `401` response with the `X-AgentVisa-Required` header, your agent calls `get_agentvisa_token` and adds `X-AgentVisa-Token: <token>` to the retry — no copy-pasting, no remembering, no prompt needed. If your agent has no token yet, `request_agentvisa` + `await_agentvisa_approval` run a device handoff: you click Approve once in your browser and the token is delivered machine-to-machine into local custody (`~/.agentvisa/token`, chmod 600) — it never appears in chat or your agent's context.
 
 ## Install
 
